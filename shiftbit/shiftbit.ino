@@ -1,29 +1,94 @@
-/*
-  Shift Register Example
- for two 74HC595 shift registers
+#include <avr/io.h>
+#include <avr/interrupt.h>
+ 
+// #define LEDPIN 13
 
- This sketch turns on each of the LEDs attached to two 74HC595 shift registers,
- in sequence from output 0 to output 15.
-
- Hardware:
- * 2 74HC595 shift register attached to pins 2, 3, and 4 of the Arduino,
- as detailed below.
- * LEDs attached to each of the outputs of the shift register
-
- Created 22 May 2009
- Modified 23 Mar 2010
- by Tom Igoe
-
- */
 
 //Pin connected to latch pin (ST_CP) of 74HC595
 const int latchPin = 10;
 //Pin connected to clock pin (SH_CP) of 74HC595
 const int clockPin = 12;
 ////Pin connected to Data in (DS) of 74HC595
-const int dataPin = 11;
+const int dataPin  = 11;
 
-char inputString[2];
+// Indexed colors for the rgb LEDS
+// LEDS are blinking very fast to dim brightness and mix to colors.
+//                    frame1, frame2, frame3, frame4, frame5, x  extra byte so 
+//                    R G B 
+const byte sets[] = { 0,0,0 , 0,0,0 , 0,0,0 , 0,0,0 , 0,0,0 , 0, // rgb's for off
+                      0,0,0 , 1,1,1 , 0,0,0 , 1,0,1 , 0,0,0 , 1, // rgb's for white , not on much and a little less green.
+                      1,0,0 , 0,0,0 , 1,0,0 , 0,0,0 , 1,0,0 , 2, // rgb's for red
+                      0,1,0 , 0,0,0 , 0,1,0 , 0,0,0 , 0,1,0 , 3, // rgb's for green
+                      0,0,1 , 0,0,1 , 0,0,0 , 0,0,1 , 0,0,1 , 4, // rgb's for blue
+                      1,0,0 , 1,0,0 , 0,0,0 , 1,0,0 , 1,1,0 , 5, // rgb's for orange
+                      0,0,0 , 1,1,0 , 0,0,0 , 1,1,0 , 0,0,0 , 6, // rgb's for geel
+                      0,0,0 , 1,0,1 , 0,0,0 , 1,0,1 , 0,0,0 , 7, // rgb's for paars
+                      0,0,0 , 0,1,1 , 0,0,0 , 0,1,1 , 0,0,0 , 8, // rgb's for cyaan
+}; 
+
+volatile byte colframe= 0;   // 5 'frames' of 
+volatile byte chip[15]= {};  // This setup has 3 595 chips and 5 'frames' to mix colors.
+
+int  anim  = 0;
+int  frames= 46;
+byte LEDS[]= { 30, 0, 0, 0, 0, 0, 0, 0, 0,
+               30, 5, 5, 5, 5, 5, 5, 5, 5,
+               30, 2, 2, 2, 2, 2, 2, 2, 2,
+               30, 1, 1, 1, 1, 1, 1, 1, 1,
+               30, 4, 4, 4, 4, 4, 4, 4, 4,
+               30, 0, 0, 0, 0, 0, 0, 0, 0,
+               90, 5, 2, 1, 4, 5, 2, 1, 4,
+               
+               20, 5, 5, 1, 4, 5, 5, 1, 4,
+               20, 5, 5, 5, 4, 5, 5, 5, 4,
+               
+               60, 5, 5, 5, 5, 5, 5, 5, 5,
+               10, 5, 5, 5, 5, 5, 5, 5, 2,
+               12, 5, 5, 5, 5, 5, 5, 2, 2,
+               14, 5, 5, 5, 5, 5, 2, 2, 1,
+               16, 5, 5, 5, 5, 2, 2, 1, 1,
+               18, 5, 5, 5, 2, 2, 1, 1, 4,
+               20, 5, 5, 2, 2, 1, 1, 4, 4,
+               90, 5, 2, 2, 1, 1, 4, 4, 5,
+               
+               15, 2, 2, 1, 1, 4, 4, 5, 5,
+               14, 2, 1, 1, 4, 4, 5, 5, 5,
+               13, 1, 1, 4, 4, 5, 5, 5, 5,
+               12, 1, 4, 4, 5, 5, 5, 5, 5,
+               11, 4, 4, 5, 5, 5, 5, 5, 5,
+               10, 4, 5, 5, 5, 5, 5, 5, 5,
+               60, 5, 5, 5, 5, 5, 5, 5, 5,
+               
+               14, 0, 0, 5, 5, 5, 5, 5, 5,
+               14, 0, 0, 0, 0, 0, 5, 5, 5,
+               
+               14, 0, 0, 0, 0, 0, 0, 0, 5,
+               14, 0, 0, 0, 0, 0, 0, 5, 0,
+               14, 0, 0, 0, 0, 0, 5, 0, 2,
+               14, 0, 0, 0, 0, 5, 0, 2, 1,
+               14, 0, 0, 0, 5, 0, 2, 1, 4,
+               14, 0, 0, 5, 0, 2, 1, 4, 0,
+               14, 0, 5, 0, 2, 1, 4, 0, 0,
+               24, 5, 0, 2, 1, 4, 0, 0, 0,
+               14, 5, 0, 0, 2, 1, 4, 0, 0, 
+               24, 5, 5, 0, 0, 2, 1, 4, 0,
+               14, 0, 5, 5, 2, 1, 4, 0, 0,
+               14, 5, 5, 2, 1, 4, 0, 0, 0,
+               24, 5, 2, 1, 4, 0, 0, 0, 0,
+               14, 5, 5, 2, 1, 4, 0, 0, 0,
+               24, 0, 5, 5, 2, 1, 4, 0, 0,
+               14, 5, 5, 2, 1, 4, 0, 0, 0,
+               14, 5, 2, 1, 4, 0, 0, 0, 0,
+               14, 2, 1, 4, 0, 0, 0, 0, 0,
+               14, 1, 4, 0, 0, 0, 0, 0, 0,
+               14, 4, 0, 0, 0, 0, 0, 0, 0,
+               40, 0, 0, 0, 0, 0, 0, 0, 0,
+               10, 0, 0, 0, 0, 0, 0, 0, 0,
+               10, 0, 0, 0, 0, 0, 0, 0, 0,
+               
+};
+
+// indexes 0 = off, 1 = white, 2 = red, 
 
 void setup() {
   //set pins to output because they are addressed in the main loop
@@ -37,136 +102,72 @@ void setup() {
   shiftOut( dataPin, clockPin, MSBFIRST, 255 );
   digitalWrite(latchPin, HIGH);
   
+  
+ // pinMode(LEDPIN, OUTPUT);
+ 
+    cli();          // disable global interrupts
+    TCCR1A = 0;     // set entire TCCR1A register to 0
+    TCCR1B = 0;     // same for TCCR1B
+ 
+    // set compare match register to desired timer count:
+    OCR1A = 15624;
+    
+    // turn on CTC mode:
+    TCCR1B |= (1 << WGM12);
+    // Set CS10 bit for no prescaler:
+    TCCR1B |= (1 << CS10);
+    // enable timer compare interrupt:
+    TIMSK1 |= (1 << OCIE1A);
+    sei();   // enable global interrupts
+    
  }
 
-
-void setBytes( byte g, byte r, byte b ) 
+ISR( TIMER1_COMPA_vect )
 {
-  // | RGB RGB RG | B RGB RGB R | GB RGB RGB |
-  // |  * | * |   *  | * | * |  *   | * | *  |
- 
- 
-   byte b1 = 0;
-   byte b2 = 0;
-   byte b3 = 0;
-   
-   b3 |= gbit( b,1 ) << 0;
-   b3 |= gbit( r,1 ) << 1;
-   b3 |= gbit( g,1 ) << 2;
-   b3 |= gbit( b,2 ) << 3;
-   b3 |= gbit( r,2 ) << 4;
-   b3 |= gbit( g,2 ) << 5;
-   b3 |= gbit( b,3 ) << 6;
-   b3 |= gbit( r,3 ) << 7;
- 
-   b2 |= gbit( g,3 ) << 0;
-   b2 |= gbit( b,4 ) << 1;
-   b2 |= gbit( r,4 ) << 2;
-   b2 |= gbit( g,4 ) << 3;
-   b2 |= gbit( b,5 ) << 4;
-   b2 |= gbit( r,5 ) << 5;
-   b2 |= gbit( g,5 ) << 6;
-   b2 |= gbit( b,6 ) << 7;
-  
-   b1 |= gbit( r,6 ) << 0;
-   b1 |= gbit( g,6 ) << 1;
-   b1 |= gbit( b,7 ) << 2;
-   b1 |= gbit( r,7 ) << 3;
-   b1 |= gbit( g,7 ) << 4;
-   b1 |= gbit( b,8 ) << 5;
-   b1 |= gbit( r,8 ) << 6;
-   b1 |= gbit( g,8 ) << 7;
+
+  colframe++;
+  if ( colframe > 4 ) colframe = 0;
   
   digitalWrite( latchPin , LOW);
-  shiftOut(dataPin, clockPin, MSBFIRST, 255-b1 );
-  shiftOut(dataPin, clockPin, MSBFIRST, 255-b2 );
-  shiftOut(dataPin, clockPin, MSBFIRST, 255-b3 );
+  shiftOut( dataPin, clockPin, MSBFIRST, chip[ 10+colframe ] );
+  shiftOut( dataPin, clockPin, MSBFIRST, chip[  5+colframe ] );
+  shiftOut( dataPin, clockPin, MSBFIRST, chip[    colframe ] );
   digitalWrite(latchPin, HIGH);
-  
-}
-
-byte gbit( byte b, int bitidx ){
-  byte bitje=  ( b & ( 1 << bitidx-1 ) ) != 0 ? 1 : 0;
-  return bitje;
-}
-
-void wave(){
-  for( byte r = 0; r < 5; r++ ){
-    int w = 100 + 50 * sin( r / 57 );
-    setBytes( 0b01100000, 0b01000000, 0b11000000 ); delay(w);
-    setBytes( 0b00110000, 0b00100000, 0b01100000 ); delay(w);
-    setBytes( 0b00011000, 0b00010000, 0b00110000 ); delay(w);
-    setBytes( 0b00001100, 0b00001000, 0b00011000 ); delay(w);
-    setBytes( 0b00000110, 0b00000100, 0b00001100 ); delay(w);
-    setBytes( 0b00000011, 0b00000010, 0b00000110 ); delay(w);
-    setBytes( 0b00000110, 0b00000100, 0b00001100 ); delay(w);
-    setBytes( 0b00001100, 0b00001000, 0b00011000 ); delay(w);
-    setBytes( 0b00011000, 0b00010000, 0b00110000 ); delay(w);
-    setBytes( 0b00110000, 0b00100000, 0b01100000 ); delay(w);
-  }
-}
-
-void vlag(){
-  
-    setBytes( 0b00011111, 0b00011000, 0b11111000 ); delay(2000);
-  
-}
-
-void vlaggy(){
-  for( byte r = 0; r < 5; r++ ){
-    setBytes( 0b00111100, 0b00110000, 0b11110000 ); delay(200);
-    setBytes( 0b00011110, 0b00011000, 0b01111000 ); delay(200);
-    setBytes( 0b00001111, 0b00001100, 0b00111100 ); delay(200);
-  } 
-}
-
-void oranje(){
-  
-  byte w = 0b11100000;
  
-   for( byte l=0; l < 6; l++){
-     for( int r = 0; r < 75; r++ ){
-      setBytes( w,0,0 ); delay(4);
-      setBytes( w, w, 0 ); delay(1);
-    }
-    w = w >> 1;
+}
+
+void setColors( byte led1, byte led2, byte led3, byte led4, byte led5, byte led6, byte led7, byte led8 )
+{
+  byte idx = 0;
+  
+  for ( byte c1 = 0; c1 < 5; c1++ )
+  {
+    byte c2 = c1 + 5;
+    byte c3 = c2 + 5;
+    byte mp = c1 * 3;
+    idx = (led1 << 4) + mp; chip[ c1 ]  = sets[ idx + 2 ]     ; chip[ c1 ] |= sets[ idx + 1 ] << 1; chip[ c1 ] |= sets[ idx + 0 ] << 2;
+    idx = (led2 << 4) + mp; chip[ c1 ] |= sets[ idx + 2 ] << 3; chip[ c1 ] |= sets[ idx + 1 ] << 4; chip[ c1 ] |= sets[ idx + 0 ] << 5;
+    idx = (led3 << 4) + mp; chip[ c1 ] |= sets[ idx + 2 ] << 6; chip[ c1 ] |= sets[ idx + 1 ] << 7; chip[ c2 ]  = sets[ idx + 0 ] << 0;
+    idx = (led4 << 4) + mp; chip[ c2 ] |= sets[ idx + 2 ] << 1; chip[ c2 ] |= sets[ idx + 1 ] << 2; chip[ c2 ] |= sets[ idx + 0 ] << 3;
+    idx = (led5 << 4) + mp; chip[ c2 ] |= sets[ idx + 2 ] << 4; chip[ c2 ] |= sets[ idx + 1 ] << 5; chip[ c2 ] |= sets[ idx + 0 ] << 6;
+    idx = (led6 << 4) + mp; chip[ c2 ] |= sets[ idx + 2 ] << 7; chip[ c3 ] =  sets[ idx + 1 ] << 0; chip[ c3 ] |= sets[ idx + 0 ] << 1;
+    idx = (led7 << 4) + mp; chip[ c3 ] |= sets[ idx + 2 ] << 2; chip[ c3 ] |= sets[ idx + 1 ] << 3; chip[ c3 ] |= sets[ idx + 0 ] << 4;
+    idx = (led8 << 4) + mp; chip[ c3 ] |= sets[ idx + 2 ] << 5; chip[ c3 ] |= sets[ idx + 1 ] << 6; chip[ c3 ] |= sets[ idx + 0 ] << 7;
+  
+    chip[ c1 ]  = 255- chip[ c1 ]; // LEDS sink to Vcc
+    chip[ c2 ]  = 255- chip[ c2 ]; //
+    chip[ c3 ]  = 255- chip[ c3 ]; // 
+    
   }
+  
 }
 
-
-void roodwitblauw(){
-  setBytes( 255, 0, 0 );
-  delay(400);
-  
-  setBytes( 255, 255, 255 );
-  delay(400);
-  
-  setBytes( 0, 0, 255 );
-  delay(400);
-}
 
 void loop() {
   
-  byte r = random( 5 );
-  switch( r )
-  {
-    case 0:  
-      wave();
-    break;
-    case 1:
-      roodwitblauw();
-    break;
-    case 2:
-      vlag();
-    break;
-    case 3:
-      vlaggy();
-    break;
-    
-    case 4:
-      oranje();
-    break;  
-}
-  
+  setColors( LEDS[anim+1], LEDS[anim+2], LEDS[anim+3], LEDS[anim+4], LEDS[anim+5], LEDS[anim+6], LEDS[anim+7], LEDS[anim+8] );
+  delay( LEDS[anim] * 10 );
+  anim+=9; if ( anim > frames*9 ) anim = 0;
+
 
 }
